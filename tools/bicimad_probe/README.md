@@ -1,6 +1,6 @@
 # BiciMAD Probe
 
-Herramientas locales y separadas de Flutter para estudiar capturas propias y hacer pruebas de lectura de viajes.
+Herramientas locales y separadas de Flutter para estudiar capturas propias y hacer pruebas de lectura de la api de MPass.
 
 No modifican la app oficial, no desactivan certificate pinning y no intentan eludir controles de integridad. No guardes credenciales, tokens, HAR reales ni respuestas crudas en el repositorio.
 
@@ -130,6 +130,33 @@ Este modo pide localmente `accessToken`, `email`, `userId`, `nif`, `deviceId` y 
 ```powershell
 python .\tools\bicimad_probe\fetch_trips.py
 ```
+
+## Consulta de Estaciones
+
+`fetch_stations.py` consulta el catalogo y la disponibilidad de estaciones con
+este endpoint de solo lectura:
+
+```text
+GET https://openapi.emtmadrid.es/v2/transport/bicimad/stations/
+```
+
+Ejecuta el comando desde la raiz. Pedira solamente el usuario/email y la
+contraseña de EMT OpenAPI; la contraseña se oculta. Obtiene el `accessToken` con
+el login de MobilityLabs y lo usa para consultar las estaciones, sin guardarlo
+ni mostrarlo:
+
+```powershell
+python .\tools\bicimad_probe\fetch_stations.py
+```
+
+Se guardan ambos resultados dentro de `tools/bicimad_probe/private/`:
+
+- `stations_raw.json`: respuesta original completa del endpoint.
+- `stations_normalized.json`: identificador, numero, nombre, direccion,
+  coordenadas y campos de disponibilidad/capacidad; omite datos auxiliares.
+
+La carpeta `private/` esta excluida de Git; no copies ni publiques la respuesta
+original.
 
 ## Normalizacion
 

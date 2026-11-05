@@ -10,9 +10,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from normalize import normalize_response
 from safe_output import safe_api_code
