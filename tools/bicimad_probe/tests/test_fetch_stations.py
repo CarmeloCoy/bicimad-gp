@@ -61,7 +61,9 @@ class FetchStationsTests(unittest.TestCase):
         self.assertEqual(fetch_mock.call_args.args, ("private-token",))
         self.assertNotIn("private-token", stdout.getvalue())
 
-    def test_openapi_login_sends_credentials_as_headers_and_extracts_token(self) -> None:
+    def test_openapi_login_sends_credentials_as_headers_and_extracts_token(
+        self,
+    ) -> None:
         captured = {}
 
         def opener(request, *, timeout):

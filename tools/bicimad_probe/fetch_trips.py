@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import getpass
 import json
-import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -97,7 +96,7 @@ def _fetch_trips(secret_headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
         body = response.read()
     payload = json.loads(body.decode("utf-8"))
     if not isinstance(payload, dict):
-        raise ValueError("Unexpected response shape")
+        raise TypeError("Unexpected response shape")
     return status, payload
 
 
@@ -116,7 +115,9 @@ def _print_success_summary(
 ) -> None:
     print(f"HTTP {status}")
     print(f"Codigo de API: {safe_api_code(payload.get('code')) or '-'}")
-    received_count = len(payload.get("data", [])) if isinstance(payload.get("data"), list) else 0
+    received_count = (
+        len(payload.get("data", [])) if isinstance(payload.get("data"), list) else 0
+    )
     print(f"Viajes recibidos: {received_count}")
     print(f"Viajes normalizados: {len(normalized)}")
 

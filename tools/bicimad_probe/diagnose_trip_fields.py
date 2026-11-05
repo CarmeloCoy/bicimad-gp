@@ -103,15 +103,11 @@ def analyze_trip_fields(
                 path=path,
                 category=categories[path],
                 types=tuple(sorted({_type_name(value) for value, _ in values})),
-                examples=tuple(
-                    sorted({_sanitized_shape(value) for value in non_null})
-                ),
+                examples=tuple(sorted({_sanitized_shape(value) for value in non_null})),
                 present_count=len(values),
                 non_null_count=len(non_null),
                 total_trips=len(trips),
-                with_source_trip_id_count=sum(
-                    1 for _, has_id in values if has_id
-                ),
+                with_source_trip_id_count=sum(1 for _, has_id in values if has_id),
             )
         )
 
@@ -224,9 +220,7 @@ def _relevant_fields(value: dict[str, Any]) -> list[tuple[str, Any, str]]:
             key_lower = key.lower()
             key_terms = set(re.findall(r"[a-z]+", key_lower))
             category = inherited
-            if key_terms & BIKE_TERMS or any(
-                term in key_lower for term in BIKE_TERMS
-            ):
+            if key_terms & BIKE_TERMS or any(term in key_lower for term in BIKE_TERMS):
                 category = "bike"
             elif key_terms & PRICE_TERMS or any(
                 term in key_lower for term in PRICE_TERMS

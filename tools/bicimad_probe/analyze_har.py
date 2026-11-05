@@ -116,7 +116,10 @@ def main(argv: list[str]) -> int:
 
     input_path = Path(argv[1])
     if not input_path.name.endswith(".sanitized.har"):
-        print("Refusing to analyze non-sanitized input. Use *.sanitized.har.", file=sys.stderr)
+        print(
+            "Refusing to analyze non-sanitized input. Use *.sanitized.har.",
+            file=sys.stderr,
+        )
         return 1
 
     try:
@@ -179,12 +182,18 @@ def _ensure_sanitized(node: Any, key_hint: str | None = None) -> None:
     if not isinstance(node, str):
         return
 
-    if key_hint and key_hint.lower() in SENSITIVE_VALUE_KEYS and node not in REDACTED_MARKERS:
+    if (
+        key_hint
+        and key_hint.lower() in SENSITIVE_VALUE_KEYS
+        and node not in REDACTED_MARKERS
+    ):
         raise ValueError("Input does not appear sanitized: sensitive value remains")
 
     for pattern in SECRET_PATTERNS:
         if pattern.search(node):
-            raise ValueError("Input does not appear sanitized: sensitive pattern remains")
+            raise ValueError(
+                "Input does not appear sanitized: sensitive pattern remains"
+            )
 
 
 def render_text_report(report: dict[str, Any]) -> str:
@@ -216,13 +225,13 @@ def render_text_report(report: dict[str, Any]) -> str:
 
 def _entries_from_har(har: dict[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(har, dict):
-        raise ValueError("Invalid HAR: root must be an object")
+        raise TypeError("Invalid HAR: root must be an object")
     log = har.get("log")
     if not isinstance(log, dict):
-        raise ValueError("Invalid HAR: missing log object")
+        raise TypeError("Invalid HAR: missing log object")
     entries = log.get("entries")
     if not isinstance(entries, list):
-        raise ValueError("Invalid HAR: missing log.entries array")
+        raise TypeError("Invalid HAR: missing log.entries array")
     return [entry for entry in entries if isinstance(entry, dict)]
 
 
@@ -238,7 +247,13 @@ def _summarize_entry(index: int, entry: dict[str, Any]) -> dict[str, Any]:
     content_type = _content_type(response, request)
     request_json_fields = _json_field_names(_request_text(request))
     response_json_fields = _json_field_names(_response_text(response))
-    all_names = query_names | request_headers | response_headers | request_json_fields | response_json_fields
+    all_names = (
+        query_names
+        | request_headers
+        | response_headers
+        | request_json_fields
+        | response_json_fields
+    )
     searchable = " ".join(
         [
             str(request.get("method") or ""),
@@ -259,7 +274,9 @@ def _summarize_entry(index: int, entry: dict[str, Any]) -> dict[str, Any]:
         "content_type": content_type,
         "query_parameter_names": sorted(query_names),
         "relevant_header_names": sorted(
-            name for name in request_headers | response_headers if name.lower() in RELEVANT_HEADER_NAMES
+            name
+            for name in request_headers | response_headers
+            if name.lower() in RELEVANT_HEADER_NAMES
         ),
         "request_json_fields": sorted(request_json_fields),
         "response_json_fields": sorted(response_json_fields),
@@ -352,10 +369,30 @@ def _classify(searchable: str) -> list[str]:
         classifications.append("posible perfil")
     if any(
         term in searchable
-        for term in ("trip", "trips", "ride", "rides", "journey", "journeys", "history", "historical")
+        for term in (
+            "trip",
+            "trips",
+            "ride",
+            "rides",
+            "journey",
+            "journeys",
+            "history",
+            "historical",
+        )
     ):
         classifications.append("posible historial")
-    if any(term in searchable for term in ("movement", "rental", "consumption", "station", "origin", "destination", "duration")):
+    if any(
+        term in searchable
+        for term in (
+            "movement",
+            "rental",
+            "consumption",
+            "station",
+            "origin",
+            "destination",
+            "duration",
+        )
+    ):
         classifications.append("posible detalle de viaje")
     return classifications
 

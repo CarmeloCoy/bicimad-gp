@@ -15,7 +15,14 @@ from safe_output import safe_api_code
 class SafeOutputTest(unittest.TestCase):
     def test_api_code_is_allowlisted(self):
         self.assertEqual(safe_api_code("00"), "00")
-        for value in (None, {}, 12345678, "fake@example.com", "00\nprivate", "12345678"):
+        for value in (
+            None,
+            {},
+            12345678,
+            "fake@example.com",
+            "00\nprivate",
+            "12345678",
+        ):
             self.assertIsNone(safe_api_code(value))
 
     def test_summaries_do_not_echo_response_fields_or_trips(self):
@@ -29,8 +36,11 @@ class SafeOutputTest(unittest.TestCase):
                 status=400, error_type="HTTPError", payload=payload
             )
             error = ProbeRequestError(
-                stage="login", status=400, api_code=private,
-                api_description=private, error_type="HTTPError",
+                stage="login",
+                status=400,
+                api_code=private,
+                api_description=private,
+                error_type="HTTPError",
             )
             fetch_trips_with_login._print_safe_error(error)
         self.assertNotIn(private, output.getvalue())

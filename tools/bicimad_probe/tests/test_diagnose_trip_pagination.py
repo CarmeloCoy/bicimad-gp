@@ -1,17 +1,16 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from pathlib import Path
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from diagnose_trip_pagination import (  # noqa: E402
+from diagnose_trip_pagination import (
     format_safe_report,
     paginate_trip_history,
 )
-from mpass_client import JsonResponse, ProbeRequestError  # noqa: E402
+from mpass_client import JsonResponse, ProbeRequestError
 
 
 class PaginationDiagnosticTests(unittest.TestCase):
@@ -207,9 +206,7 @@ class PaginationDiagnosticTests(unittest.TestCase):
             ]
         )
 
-        report = format_safe_report(
-            paginate_trip_history(fetcher, pause_seconds=0)
-        )
+        report = format_safe_report(paginate_trip_history(fetcher, pause_seconds=0))
 
         self.assertIn("2025-01", report)
         self.assertIn("2026-07", report)
@@ -256,9 +253,7 @@ class GeneratingPageFetcher:
     def __call__(self, page: int | None) -> JsonResponse:
         current = self.index
         self.index += 1
-        return _response(
-            [_trip(f"trip-{current}-a"), _trip(f"trip-{current}-b")]
-        )
+        return _response([_trip(f"trip-{current}-a"), _trip(f"trip-{current}-b")])
 
 
 def _response(data: list[dict]) -> JsonResponse:

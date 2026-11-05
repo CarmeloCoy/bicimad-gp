@@ -190,7 +190,9 @@ def _redact_value_shape(value: Any, marker: str) -> Any:
 def _sanitize_cookie(item: Any) -> Any:
     if isinstance(item, dict):
         return {
-            key: REDACTED_COOKIE if key.lower() == "value" else _sanitize_node(value, key)
+            key: REDACTED_COOKIE
+            if key.lower() == "value"
+            else _sanitize_node(value, key)
             for key, value in item.items()
         }
     return REDACTED_COOKIE
@@ -199,7 +201,9 @@ def _sanitize_cookie(item: Any) -> Any:
 def _sanitize_text_field(value: str) -> str:
     decoded = _try_decode_json(value)
     if decoded is not None:
-        return json.dumps(_sanitize_node(decoded), ensure_ascii=False, separators=(",", ":"))
+        return json.dumps(
+            _sanitize_node(decoded), ensure_ascii=False, separators=(",", ":")
+        )
 
     decoded_base64 = _try_decode_base64_json(value)
     if decoded_base64 is not None:

@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from diagnose_trip_fields import analyze_trip_fields, format_safe_report  # noqa: E402
+from diagnose_trip_fields import analyze_trip_fields, format_safe_report
 
 
 class DiagnoseTripFieldsTests(unittest.TestCase):

@@ -9,7 +9,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
 OUTPUT_FIELDS = {
     "external_id",
     "origin_station_number",
@@ -30,7 +29,7 @@ def normalize_response(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if trips is None:
         return []
     if not isinstance(trips, list):
-        raise ValueError("Invalid trips response: data must be a list")
+        raise TypeError("Invalid trips response: data must be a list")
 
     normalized = []
     for item in trips:

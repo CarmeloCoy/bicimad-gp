@@ -3,15 +3,14 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from analyze_har import analyze_har, main, render_text_report  # noqa: E402
+from analyze_har import analyze_har, main, render_text_report
 
 
 class AnalyzeHarTests(unittest.TestCase):
@@ -78,9 +77,9 @@ class AnalyzeHarTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             input_path = Path(directory) / "capture.sanitized.har"
             raw_har = _sanitized_har()
-            raw_har["log"]["entries"][0]["request"]["headers"][0][
-                "value"
-            ] = "Bearer raw-secret-token"
+            raw_har["log"]["entries"][0]["request"]["headers"][0]["value"] = (
+                "Bearer raw-secret-token"
+            )
             input_path.write_text(json.dumps(raw_har), encoding="utf-8")
 
             stderr = io.StringIO()

@@ -15,9 +15,7 @@ from mpass_client import ProbeRequestError, run_login_trip_flow
 
 DEFAULT_DEVICE_MODEL = "Samsung SM-A127F"
 DEFAULT_ANDROID_VERSION = "13"
-GENERATED_DEVICE_ID_PATH = Path(
-    "tools/bicimad_probe/private/generated_device_id.txt"
-)
+GENERATED_DEVICE_ID_PATH = Path("tools/bicimad_probe/private/generated_device_id.txt")
 DEVICE_ID_PATTERN = re.compile(r"^[0-9a-f]{16}$")
 
 
@@ -26,7 +24,7 @@ class InvalidLocalDeviceIdError(ValueError):
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    _parse_args(sys.argv[1:] if argv is None else argv)
     try:
         values = _prompt_values()
         result = run_login_trip_flow(**values)
@@ -49,9 +47,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("Login MPass: correcto")
     expiration = (
-        result.token_sec_expiration
-        if result.token_sec_expiration is not None
-        else "-"
+        result.token_sec_expiration if result.token_sec_expiration is not None else "-"
     )
     print(f"Caducidad declarada del token: {expiration} segundos")
     print("Datos de usuario: correctos")

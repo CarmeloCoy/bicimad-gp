@@ -2,19 +2,15 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
 import unittest
 from pathlib import Path
 
-import sys
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from normalize import OUTPUT_FIELDS, normalize_response  # noqa: E402
+from normalize import OUTPUT_FIELDS, normalize_response
 
-
-FIXTURE_PATH = (
-    Path(__file__).resolve().parent / "fixtures" / "trips_response_fake.json"
-)
+FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "trips_response_fake.json"
 
 
 class NormalizeTripsTests(unittest.TestCase):
