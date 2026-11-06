@@ -1,30 +1,34 @@
 #!/usr/bin/env python3
-"""Log in with an own BiciMAD account and fetch EMT OpenAPI stations."""
+"""Log in with MPass and fetch BiciMAD stations."""
 
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
-import os
 import sys
-import urllib.error
-import urllib.request
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from fetch_trips_with_login import (
+    EMAIL_ENV_VAR,
+    InvalidLocalDeviceIdError,
+    MissingAccountCredentialsError,
+    PASSWORD_ENV_VAR,
+    _prompt_values,
+)
+from local_secrets import MissingLocalTechnicalConfigError
+from mpass_client import (
+    ProbeRequestError,
+    build_login_device_model,
+    fetch_stations as _fetch_stations,
+    login,
+)
 from normalize_stations import normalize_stations_response
 from safe_output import safe_api_code
 
-LOGIN_ENDPOINT = "https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/"
-ENDPOINT = "https://openapi.emtmadrid.es/v2/transport/bicimad/stations/"
-TIMEOUT_SECONDS = 20
 PRIVATE_OUTPUT_DIR = Path(__file__).resolve().parent / "private"
 RAW_OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_raw.json"
 OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_normalized.json"
-EMAIL_ENV_VAR = "BICIMAD_EMT_EMAIL"
-PASSWORD_ENV_VAR = "BICIMAD_EMT_PASSWORD"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,15 +36,41 @@ def main(argv: list[str] | None = None) -> int:
     raw_output_path = PRIVATE_OUTPUT_DIR / args.raw_filename
     output_path = PRIVATE_OUTPUT_DIR / args.normalized_filename
 
-    stage = "login"
+    stage = "entrada"
     try:
-        email, password = _get_credentials()
-        access_token = _login(email, password)
+        values = _prompt_values()
+        stage = "login"
+        login_result = login(
+            email=values["email"],
+            password=values["password"],
+            pass_key=values["pass_key"],
+            x_client_id=values["x_client_id"],
+            device_id=values["device_id"],
+            login_device_model=build_login_device_model(
+                values["device_model_visible"],
+                values["android_version"],
+            ),
+        )
         stage = "estaciones"
-        status, payload = _fetch_stations(access_token)
+        response = _fetch_stations(
+            access_token=login_result.access_token,
+            email=values["email"],
+            user_id=login_result.user_id,
+            device_id=values["device_id"],
+            device_model=values["device_model_visible"],
+        )
+        status = response.status
+        payload = response.payload
         stations = normalize_stations_response(payload)
         _write_raw_response(payload, raw_output_path)
         _write_stations(stations, output_path)
+        expiration = (
+            login_result.token_sec_expiration
+            if login_result.token_sec_expiration is not None
+            else "-"
+        )
+        print("Login MPass: correcto")
+        print(f"Caducidad declarada del token: {expiration} segundos")
         _print_success_summary(
             status,
             payload,
@@ -49,46 +79,25 @@ def main(argv: list[str] | None = None) -> int:
             output_path=output_path,
         )
         return 0
-    except MissingCredentialsError as error:
-        print(f"Credenciales EMT no disponibles: {error}")
+    except InvalidLocalDeviceIdError:
+        print("El deviceId local tiene un formato inválido")
         return 1
-    except urllib.error.HTTPError as error:
-        _print_error_summary(
-            stage=stage,
-            status=error.code,
-            error_type=type(error).__name__,
-            payload=_safe_error_payload(error),
-        )
+    except MissingLocalTechnicalConfigError:
+        print("Falta la configuración técnica local.")
+        print("Ejecuta:")
+        print("python tools/bicimad_probe/configure_local_probe.py")
         return 1
-    except OpenApiLoginError as error:
-        print("Etapa fallida: login")
-        print(f"HTTP {error.status}")
-        print(f"Tipo de error: {error.error_type}")
-        if error.api_code is not None:
-            print(f"Codigo de API: {error.api_code}")
+    except MissingAccountCredentialsError:
+        print(f"Configura ambas variables {EMAIL_ENV_VAR} y {PASSWORD_ENV_VAR}.")
         return 1
-    except urllib.error.URLError as error:
-        _print_error_summary(
-            stage=stage,
-            status=None,
-            error_type=type(error.reason).__name__,
-            payload=None,
-        )
+    except ProbeRequestError as error:
+        _print_safe_error(error)
         return 1
-    except TimeoutError:
-        _print_error_summary(
-            stage=stage,
-            status=None,
-            error_type="TimeoutError",
-            payload=None,
-        )
-        return 1
-    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, TypeError, ValueError) as error:
         _print_error_summary(
             stage=stage,
             status=None,
             error_type=type(error).__name__,
-            payload=None,
         )
         return 1
 
@@ -126,88 +135,6 @@ def _filename_argument(value: str) -> str:
     ):
         raise argparse.ArgumentTypeError("provide a filename, not a path")
     return value
-
-
-def _get_credentials() -> tuple[str, str]:
-    email = os.environ.get(EMAIL_ENV_VAR)
-    password = os.environ.get(PASSWORD_ENV_VAR)
-    if email is not None or password is not None:
-        if not email or not password:
-            raise MissingCredentialsError(
-                f"set both {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR}"
-            )
-        email = email.strip()
-        if not email:
-            raise MissingCredentialsError(
-                f"set both {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR}"
-            )
-        return email, password
-
-    if not sys.stdin.isatty():
-        raise MissingCredentialsError(
-            f"set {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR} for noninteractive runs"
-        )
-
-    email = input("Usuario/email EMT OpenAPI: ").strip()
-    password = getpass.getpass("Contraseña: ")
-    if not email or not password:
-        raise MissingCredentialsError("email y contraseña son obligatorios")
-    return email, password
-
-
-def _login(
-    email: str,
-    password: str,
-    *,
-    opener: Callable[..., Any] = urllib.request.urlopen,
-) -> str:
-    status, payload = _fetch_json(
-        LOGIN_ENDPOINT,
-        headers={"email": email, "password": password},
-        opener=opener,
-    )
-    if payload.get("code") != "00":
-        raise OpenApiLoginError(status, payload.get("code"), "ApiError")
-
-    data = payload.get("data")
-    if not isinstance(data, list) or not data or not isinstance(data[0], dict):
-        raise OpenApiLoginError(status, payload.get("code"), "InvalidResponse")
-    access_token = data[0].get("accessToken")
-    if not isinstance(access_token, str) or not access_token:
-        raise OpenApiLoginError(status, payload.get("code"), "MissingAccessToken")
-    return access_token
-
-
-def _fetch_stations(
-    access_token: str,
-    *,
-    opener: Callable[..., Any] = urllib.request.urlopen,
-) -> tuple[int, dict[str, Any]]:
-    return _fetch_json(
-        ENDPOINT,
-        headers={"accessToken": access_token, "Accept": "application/json"},
-        opener=opener,
-    )
-
-
-def _fetch_json(
-    url: str,
-    *,
-    headers: dict[str, str],
-    opener: Callable[..., Any] = urllib.request.urlopen,
-) -> tuple[int, dict[str, Any]]:
-    request = urllib.request.Request(
-        url,
-        headers=headers,
-        method="GET",
-    )
-    with opener(request, timeout=TIMEOUT_SECONDS) as response:
-        status = response.status
-        body = response.read()
-    payload = json.loads(body.decode("utf-8"))
-    if not isinstance(payload, dict):
-        raise TypeError("Unexpected response shape")
-    return status, payload
 
 
 def _write_stations(
@@ -252,38 +179,23 @@ def _print_success_summary(
     print(f"Resultado normalizado: {output_path.as_posix()}")
 
 
-def _safe_error_payload(error: urllib.error.HTTPError) -> dict[str, Any] | None:
-    try:
-        payload = json.loads(error.read().decode("utf-8"))
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
-    return payload if isinstance(payload, dict) else None
-
-
 def _print_error_summary(
     *,
     stage: str,
     status: int | None,
     error_type: str,
-    payload: dict[str, Any] | None,
 ) -> None:
     print(f"Etapa fallida: {stage}")
     print(f"HTTP {status if status is not None else '-'}")
     print(f"Tipo de error: {error_type}")
-    if payload is not None:
-        print(f"Codigo de API: {safe_api_code(payload.get('code')) or '-'}")
 
 
-class OpenApiLoginError(ValueError):
-    def __init__(self, status: int, api_code: object, error_type: str) -> None:
-        super().__init__(error_type)
-        self.status = status
-        self.api_code = safe_api_code(api_code)
-        self.error_type = error_type
-
-
-class MissingCredentialsError(ValueError):
-    pass
+def _print_safe_error(error: ProbeRequestError) -> None:
+    print(f"Etapa fallida: {error.stage}")
+    print(f"HTTP {error.status if error.status is not None else '-'}")
+    if error.api_code is not None:
+        print(f"Codigo de API: {error.api_code}")
+    print(f"Tipo de excepcion: {error.error_type}")
 
 
 if __name__ == "__main__":

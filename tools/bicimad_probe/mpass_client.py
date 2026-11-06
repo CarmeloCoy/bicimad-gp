@@ -21,6 +21,7 @@ from safe_output import safe_api_code
 LOGIN_ENDPOINT = "https://api.mpass.mobi/v1/core/identity/login/integrator"
 USERDATA_ENDPOINT = "https://apiemtpay.emtmadrid.es/v2/bicimad/userdata/"
 TRIPS_ENDPOINT = "https://apiemtpay.emtmadrid.es/v2/bicimad/trips/"
+STATIONS_ENDPOINT = "https://openapi.emtmadrid.es/v2/transport/bicimad/stations/"
 TIMEOUT_SECONDS = 20
 OUTPUT_PATH = Path("tools/bicimad_probe/private/trips_normalized.json")
 
@@ -249,6 +250,34 @@ def fetch_trips(
     return response
 
 
+def fetch_stations(
+    *,
+    access_token: str,
+    email: str,
+    user_id: str,
+    device_id: str,
+    device_model: str,
+    opener: Opener = urllib.request.urlopen,
+) -> JsonResponse:
+    response = _request_json(
+        stage="stations",
+        url=STATIONS_ENDPOINT,
+        method="GET",
+        headers=build_authenticated_headers(
+            access_token=access_token,
+            email=email,
+            user_id=user_id,
+            nif=None,
+            device_id=device_id,
+            device_model=device_model,
+        ),
+        body=None,
+        opener=opener,
+    )
+    _ensure_stations_success(response)
+    return response
+
+
 def build_authenticated_headers(
     *,
     access_token: str,
@@ -438,6 +467,18 @@ def _ensure_trips_success(response: JsonResponse) -> None:
     if code != "00":
         raise ProbeRequestError(
             stage="trips",
+            status=response.status,
+            api_code=_safe_str(code),
+            api_description=_safe_str(response.payload.get("description")),
+            error_type="ApiError",
+        )
+
+
+def _ensure_stations_success(response: JsonResponse) -> None:
+    code = response.payload.get("code")
+    if code != "00":
+        raise ProbeRequestError(
+            stage="stations",
             status=response.status,
             api_code=_safe_str(code),
             api_description=_safe_str(response.payload.get("description")),

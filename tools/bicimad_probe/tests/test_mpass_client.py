@@ -31,7 +31,9 @@ from local_secrets import (
 from mpass_client import (
     FlowResult,
     ProbeRequestError,
+    STATIONS_ENDPOINT,
     build_login_device_model,
+    fetch_stations as fetch_station_data,
     fetch_trips,
     fetch_userdata_dn,
     login,
@@ -291,6 +293,46 @@ class MPassClientTests(unittest.TestCase):
         self.assertIsNone(opener.requests[0].get_header("Page"))
         self.assertEqual(opener.requests[1].get_header("Page"), "2")
 
+    def test_stations_uses_mpass_authenticated_read_only_request(self) -> None:
+        payload = {"code": "00", "data": []}
+        opener = FakeOpener([FakeResponse(payload)])
+
+        response = fetch_station_data(
+            access_token="fake-access-token",
+            email="person@example.test",
+            user_id="fake-user-id",
+            device_id="fake-device-id",
+            device_model="Model X",
+            opener=opener,
+        )
+
+        request = opener.requests[0]
+        self.assertEqual(response.status, 200)
+        self.assertEqual(response.payload, payload)
+        self.assertEqual(request.full_url, STATIONS_ENDPOINT)
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Accesstoken"), "fake-access-token")
+        self.assertEqual(request.get_header("Email"), "person@example.test")
+        self.assertEqual(request.get_header("Userid"), "fake-user-id")
+        self.assertEqual(request.get_header("Deviceid"), "fake-device-id")
+        self.assertIsNone(request.get_header("Nif"))
+
+    def test_stations_rejects_non_success_api_code(self) -> None:
+        opener = FakeOpener([FakeResponse({"code": "41", "data": []})])
+
+        with self.assertRaises(ProbeRequestError) as raised:
+            fetch_station_data(
+                access_token="fake-access-token",
+                email="person@example.test",
+                user_id="fake-user-id",
+                device_id="fake-device-id",
+                device_model="Model X",
+                opener=opener,
+            )
+
+        self.assertEqual(raised.exception.stage, "stations")
+        self.assertEqual(raised.exception.api_code, "41")
+
     def test_http_error_in_each_stage_is_safe(self) -> None:
         cases = [
             ("login", lambda opener: _call_login(opener)),
@@ -312,6 +354,17 @@ class MPassClientTests(unittest.TestCase):
                     email="person@example.test",
                     user_id="fake-user-id",
                     nif="fake-dn-format",
+                    device_id="fake-device-id",
+                    device_model="Model X",
+                    opener=opener,
+                ),
+            ),
+            (
+                "stations",
+                lambda opener: fetch_station_data(
+                    access_token="fake-access-token",
+                    email="person@example.test",
+                    user_id="fake-user-id",
                     device_id="fake-device-id",
                     device_model="Model X",
                     opener=opener,
@@ -578,6 +631,7 @@ class MPassClientTests(unittest.TestCase):
 
         stdout = io.StringIO()
         with (
+            mock.patch.dict("fetch_trips_with_login.os.environ", {}, clear=True),
             mock.patch(
                 "builtins.input", side_effect=["person@example.test"]
             ) as input_mock,
@@ -609,6 +663,53 @@ class MPassClientTests(unittest.TestCase):
         self.assertEqual(flow_mock.call_args.kwargs["pass_key"], "fake-pass-key")
         self.assertEqual(flow_mock.call_args.kwargs["x_client_id"], "fake-client-id")
         self.assertEqual(flow_mock.call_args.kwargs["device_id"], "0123456789abcdef")
+
+    def test_prompt_values_reads_account_credentials_from_environment(self) -> None:
+        with (
+            mock.patch.dict(
+                "fetch_trips_with_login.os.environ",
+                {
+                    "BICIMAD_EMT_EMAIL": " person@example.test ",
+                    "BICIMAD_EMT_PASSWORD": "fake-password",
+                },
+                clear=True,
+            ),
+            mock.patch("builtins.input") as input_mock,
+            mock.patch("getpass.getpass") as password_mock,
+            mock.patch(
+                "fetch_trips_with_login.load_technical_config",
+                return_value=TechnicalConfig(
+                    pass_key="fake-pass-key",
+                    x_client_id="fake-client-id",
+                ),
+            ),
+            mock.patch(
+                "fetch_trips_with_login.get_or_create_generated_device_id",
+                return_value="0123456789abcdef",
+            ),
+        ):
+            values = fetch_trips_with_login._prompt_values()
+
+        self.assertEqual(values["email"], "person@example.test")
+        self.assertEqual(values["password"], "fake-password")
+        input_mock.assert_not_called()
+        password_mock.assert_not_called()
+
+    def test_prompt_values_requires_both_account_environment_variables(self) -> None:
+        with (
+            mock.patch.dict(
+                "fetch_trips_with_login.os.environ",
+                {"BICIMAD_EMT_EMAIL": "person@example.test"},
+                clear=True,
+            ),
+            mock.patch("builtins.input") as input_mock,
+            mock.patch("getpass.getpass") as password_mock,
+            self.assertRaises(fetch_trips_with_login.MissingAccountCredentialsError),
+        ):
+            fetch_trips_with_login._prompt_values()
+
+        input_mock.assert_not_called()
+        password_mock.assert_not_called()
 
     def test_invalid_auto_device_id_performs_no_calls(self) -> None:
         stdout = io.StringIO()

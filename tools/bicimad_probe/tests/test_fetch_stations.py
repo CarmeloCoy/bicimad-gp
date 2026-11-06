@@ -6,119 +6,91 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, call, patch
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import fetch_stations
-
-
-class FakeResponse:
-    def __init__(self, payload=None, status=200):
-        self.status = status
-        self.payload = payload or {"code": "00", "data": []}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_args):
-        return None
-
-    def read(self) -> bytes:
-        return json.dumps(self.payload).encode("utf-8")
+from mpass_client import JsonResponse, LoginResult
 
 
 class FetchStationsTests(unittest.TestCase):
-    def test_main_prompts_only_for_account_email_and_password(self) -> None:
+    def test_main_uses_shared_mpass_login_inputs_and_fetches_stations(self) -> None:
+        values = {
+            "email": "person@example.test",
+            "password": "fake-password",
+            "pass_key": "fake-pass-key",
+            "x_client_id": "fake-client-id",
+            "device_id": "0123456789abcdef",
+            "device_model_visible": "Samsung SM-A127F",
+            "android_version": "13",
+        }
+        payload = {"code": "00", "data": []}
+        stations: list[dict[str, object]] = []
+        raw_path = fetch_stations.PRIVATE_OUTPUT_DIR / "stations_raw.json"
+        normalized_path = fetch_stations.PRIVATE_OUTPUT_DIR / "stations_normalized.json"
         stdout = io.StringIO()
+
         with (
+            patch("fetch_stations._prompt_values", return_value=values) as prompt_mock,
             patch(
-                "fetch_stations.sys.stdin",
-                new=Mock(isatty=Mock(return_value=True)),
-            ),
-            patch.dict("fetch_stations.os.environ", {}, clear=True),
-            patch("builtins.input", side_effect=["person@example.test"]) as input_mock,
-            patch("getpass.getpass", side_effect=["fake-password"]) as password_mock,
-            patch("fetch_stations._login", return_value="private-token") as login_mock,
+                "fetch_stations.login",
+                return_value=LoginResult("private-token", "private-user", 3600),
+            ) as login_mock,
             patch(
                 "fetch_stations._fetch_stations",
-                return_value=(200, {"code": "00", "data": []}),
+                return_value=JsonResponse(200, payload),
             ) as fetch_mock,
-            patch("fetch_stations._write_raw_response"),
-            patch("fetch_stations._write_stations"),
+            patch("fetch_stations.normalize_stations_response", return_value=stations),
+            patch("fetch_stations._write_raw_response") as write_raw_mock,
+            patch("fetch_stations._write_stations") as write_stations_mock,
             contextlib.redirect_stdout(stdout),
         ):
             exit_code = fetch_stations.main([])
 
         self.assertEqual(exit_code, 0)
-        self.assertEqual(
-            input_mock.call_args_list,
-            [call("Usuario/email EMT OpenAPI: ")],
+        prompt_mock.assert_called_once_with()
+        login_mock.assert_called_once_with(
+            email="person@example.test",
+            password="fake-password",
+            pass_key="fake-pass-key",
+            x_client_id="fake-client-id",
+            device_id="0123456789abcdef",
+            login_device_model='{"name":"Samsung SM-A127F","model":"Android","version":"13"}',
         )
-        self.assertEqual(
-            password_mock.call_args_list,
-            [call("Contraseña: ")],
+        fetch_mock.assert_called_once_with(
+            access_token="private-token",
+            email="person@example.test",
+            user_id="private-user",
+            device_id="0123456789abcdef",
+            device_model="Samsung SM-A127F",
         )
-        self.assertEqual(
-            login_mock.call_args.args,
-            ("person@example.test", "fake-password"),
-        )
-        self.assertEqual(fetch_mock.call_args.args, ("private-token",))
-        self.assertNotIn("private-token", stdout.getvalue())
-
-    def test_main_uses_environment_credentials_and_selected_filenames(self) -> None:
-        payload = {"code": "00", "data": []}
-        stations: list[dict[str, object]] = []
-        raw_path = fetch_stations.PRIVATE_OUTPUT_DIR / "raw_snapshot.json"
-        normalized_path = fetch_stations.PRIVATE_OUTPUT_DIR / "stations_snapshot.json"
-        with (
-            patch.dict(
-                "fetch_stations.os.environ",
-                {
-                    "BICIMAD_EMT_EMAIL": " person@example.test ",
-                    "BICIMAD_EMT_PASSWORD": "fake-password",
-                },
-                clear=True,
-            ),
-            patch(
-                "fetch_stations.sys.stdin",
-                new=Mock(isatty=Mock(return_value=False)),
-            ),
-            patch("builtins.input") as input_mock,
-            patch("fetch_stations._login", return_value="private-token") as login_mock,
-            patch("fetch_stations._fetch_stations", return_value=(200, payload)),
-            patch("fetch_stations.normalize_stations_response", return_value=stations),
-            patch("fetch_stations._write_raw_response") as write_raw_mock,
-            patch("fetch_stations._write_stations") as write_stations_mock,
-            contextlib.redirect_stdout(io.StringIO()),
-        ):
-            exit_code = fetch_stations.main(
-                [
-                    "--raw-filename",
-                    "raw_snapshot.json",
-                    "--normalized-filename",
-                    "stations_snapshot.json",
-                ]
-            )
-
-        self.assertEqual(exit_code, 0)
-        self.assertEqual(
-            login_mock.call_args.args,
-            ("person@example.test", "fake-password"),
-        )
-        input_mock.assert_not_called()
         write_raw_mock.assert_called_once_with(payload, raw_path)
         write_stations_mock.assert_called_once_with(stations, normalized_path)
+        self.assertNotIn("private-token", stdout.getvalue())
+        self.assertNotIn("private-user", stdout.getvalue())
 
-    def test_main_fails_safely_without_credentials_in_noninteractive_mode(self) -> None:
+    def test_main_reports_missing_local_technical_config(self) -> None:
         stdout = io.StringIO()
         with (
-            patch.dict("fetch_stations.os.environ", {}, clear=True),
             patch(
-                "fetch_stations.sys.stdin",
-                new=Mock(isatty=Mock(return_value=False)),
+                "fetch_stations._prompt_values",
+                side_effect=fetch_stations.MissingLocalTechnicalConfigError(),
             ),
-            patch("fetch_stations._login") as login_mock,
+            contextlib.redirect_stdout(stdout),
+        ):
+            exit_code = fetch_stations.main([])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("configure_local_probe.py", stdout.getvalue())
+
+    def test_main_reports_partial_account_environment_configuration(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch(
+                "fetch_stations._prompt_values",
+                side_effect=fetch_stations.MissingAccountCredentialsError(),
+            ),
             contextlib.redirect_stdout(stdout),
         ):
             exit_code = fetch_stations.main([])
@@ -126,7 +98,6 @@ class FetchStationsTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("BICIMAD_EMT_EMAIL", stdout.getvalue())
         self.assertIn("BICIMAD_EMT_PASSWORD", stdout.getvalue())
-        login_mock.assert_not_called()
 
     def test_filename_options_reject_paths_and_duplicate_filenames(self) -> None:
         for args in (
@@ -139,56 +110,6 @@ class FetchStationsTests(unittest.TestCase):
                 self.assertRaises(SystemExit),
             ):
                 fetch_stations._parse_args(args)
-
-    def test_openapi_login_sends_credentials_as_headers_and_extracts_token(
-        self,
-    ) -> None:
-        captured = {}
-
-        def opener(request, *, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return FakeResponse(
-                {
-                    "code": "00",
-                    "description": "contains private account data",
-                    "data": [{"accessToken": "private-token"}],
-                }
-            )
-
-        token = fetch_stations._login(
-            "person@example.test",
-            "private-password",
-            opener=opener,
-        )
-
-        request = captured["request"]
-        self.assertEqual(token, "private-token")
-        self.assertEqual(request.full_url, fetch_stations.LOGIN_ENDPOINT)
-        self.assertEqual(request.get_method(), "GET")
-        self.assertEqual(request.get_header("Email"), "person@example.test")
-        self.assertEqual(request.get_header("Password"), "private-password")
-        self.assertEqual(captured["timeout"], fetch_stations.TIMEOUT_SECONDS)
-
-    def test_fetch_uses_endpoint_access_token_and_read_only_get(self) -> None:
-        captured = {}
-
-        def opener(request, *, timeout):
-            captured["request"] = request
-            captured["timeout"] = timeout
-            return FakeResponse()
-
-        status, payload = fetch_stations._fetch_stations(
-            "local-token-do-not-print", opener=opener
-        )
-
-        request = captured["request"]
-        self.assertEqual(status, 200)
-        self.assertEqual(payload, {"code": "00", "data": []})
-        self.assertEqual(request.full_url, fetch_stations.ENDPOINT)
-        self.assertEqual(request.get_method(), "GET")
-        self.assertEqual(request.get_header("Accesstoken"), "local-token-do-not-print")
-        self.assertEqual(captured["timeout"], fetch_stations.TIMEOUT_SECONDS)
 
     def test_summary_does_not_print_station_values_or_description(self) -> None:
         private = "station detail should not be printed"

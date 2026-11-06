@@ -31,6 +31,19 @@ BICIMAD_X_CLIENT_ID
 
 Configura ambas mediante el gestor de secretos de tu entorno y ejecuta `fetch_trips_with_login.py`. Si ambas tienen valor, se usan en lugar del keyring; si ninguna tiene valor, se consulta el keyring local. Si solo una tiene valor, el programa falla sin intentar mezclar fuentes. No guardes los valores en Git ni los incluyas en comandos que queden en el historial de la shell; las variables de entorno pueden ser visibles para procesos con permisos suficientes.
 
+Para no introducir el email y la contraseña de la cuenta en cada ejecucion,
+puedes proporcionar ambas variables de entorno:
+
+```text
+BICIMAD_EMT_EMAIL
+BICIMAD_EMT_PASSWORD
+```
+
+Si ambas estan configuradas, se usan en lugar de los prompts; si solo una esta
+configurada, el programa falla sin pedir ni mezclar credenciales. Esto permite
+ejecuciones no interactivas cuando tambien esta disponible la configuracion
+tecnica.
+
 `passKey` y `X-ClientId` deben obtenerse de una captura propia y legitima. No deben compartirse, publicarse, registrarse ni incluirse en Git.
 
 Para eliminar la configuracion tecnica local:
@@ -47,7 +60,7 @@ Ejecutar desde la raiz del repositorio:
 python .\tools\bicimad_probe\fetch_trips_with_login.py
 ```
 
-El programa pedira unicamente:
+Si las variables de cuenta no estan configuradas, el programa pedira:
 
 - Email.
 - Contrasena, oculta con `getpass`.
@@ -146,13 +159,14 @@ python .\tools\bicimad_probe\fetch_trips.py
 este endpoint de solo lectura:
 
 ```text
-GET https://openapi.emtmadrid.es/v2/transport/bicimad/stations/
+GET https://apiemtpay.emtmadrid.es/v2/bicimad/stations/
 ```
 
-Ejecuta el comando desde la raiz. En una terminal interactiva pedira solamente
-el usuario/email y la contraseña de EMT OpenAPI; la contraseña se oculta.
-Obtiene el `accessToken` con el login de MobilityLabs y lo usa para consultar
-las estaciones, sin guardarlo ni mostrarlo:
+Ejecuta el comando desde la raiz. Usa el mismo flujo de login MPass que
+`fetch_trips_with_login.py`: pide el email y la contraseña (oculta) o los lee de
+`BICIMAD_EMT_EMAIL` y `BICIMAD_EMT_PASSWORD`; reutiliza `passKey`, `X-ClientId`
+y el `deviceId` locales, y consulta las estaciones con el token MPass sin
+guardarlo ni mostrarlo:
 
 ```powershell
 python .\tools\bicimad_probe\fetch_stations.py
@@ -177,39 +191,8 @@ Se guardan ambos resultados dentro de `tools/bicimad_probe/private/`:
   coordenadas y campos de disponibilidad/capacidad; omite datos auxiliares.
 
 La carpeta `private/` esta excluida de Git; no copies ni publiques la respuesta
-original.
-
-### Ejecucion periodica en Linux con cron
-
-Para ejecuciones no interactivas, configura las variables de entorno
-`BICIMAD_EMT_EMAIL` y `BICIMAD_EMT_PASSWORD`. No incluyas las credenciales
-directamente en la entrada de cron. Una opcion es guardar las dos variables en
-`tools/bicimad_probe/private/emt_credentials.env`, con sintaxis de shell:
-
-```sh
-BICIMAD_EMT_EMAIL='tu-correo'
-BICIMAD_EMT_PASSWORD='tu-contrasena'
-```
-
-Restringe el acceso al archivo:
-
-```sh
-chmod 600 tools/bicimad_probe/private/emt_credentials.env
-```
-
-Anade esta entrada con `crontab -e`, sustituyendo la ruta del repositorio y
-ajustando las rutas de `python3` y `flock` si fuera necesario. Se ejecuta cada
-cinco minutos, evita ejecuciones simultaneas y anade la salida a un log privado:
-
-```cron
-BICIMAD_REPO=/ruta/absoluta/al/repositorio
-*/5 * * * * cd "$BICIMAD_REPO" && set -a && . "$BICIMAD_REPO/tools/bicimad_probe/private/emt_credentials.env" && set +a && /usr/bin/flock -n "$BICIMAD_REPO/tools/bicimad_probe/private/fetch_stations.lock" /usr/bin/python3 "$BICIMAD_REPO/tools/bicimad_probe/fetch_stations.py" --raw-filename stations_raw.json --normalized-filename stations_normalized.json >> "$BICIMAD_REPO/tools/bicimad_probe/private/fetch_stations.log" 2>&1
-```
-
-Los nombres por defecto se pueden omitir de la linea de cron. Con nombres fijos,
-cada ejecucion correcta reemplaza los archivos de salida anteriores. Si no hay
-variables de credenciales y no existe una terminal interactiva, el programa
-falla de forma segura en vez de quedarse esperando una entrada.
+original. Igual que el flujo de viajes, acepta `BICIMAD_EMT_EMAIL` y
+`BICIMAD_EMT_PASSWORD` para ejecuciones no interactivas.
 
 ## Normalizacion
 
