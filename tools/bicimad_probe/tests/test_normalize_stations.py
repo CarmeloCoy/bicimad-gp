@@ -77,7 +77,7 @@ class NormalizeStationsTests(unittest.TestCase):
         self.assertEqual([station["id"] for station in stations], ["3"])
 
     def test_requires_data_list(self) -> None:
-        with self.assertRaisesRegex(ValueError, "data must be a list"):
+        with self.assertRaisesRegex(TypeError, "data must be a list"):
             normalize_stations_response({"data": {}})
 
 

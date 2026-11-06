@@ -6,7 +6,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -32,6 +32,11 @@ class FetchStationsTests(unittest.TestCase):
     def test_main_prompts_only_for_account_email_and_password(self) -> None:
         stdout = io.StringIO()
         with (
+            patch(
+                "fetch_stations.sys.stdin",
+                new=Mock(isatty=Mock(return_value=True)),
+            ),
+            patch.dict("fetch_stations.os.environ", {}, clear=True),
             patch("builtins.input", side_effect=["person@example.test"]) as input_mock,
             patch("getpass.getpass", side_effect=["fake-password"]) as password_mock,
             patch("fetch_stations._login", return_value="private-token") as login_mock,
@@ -43,7 +48,7 @@ class FetchStationsTests(unittest.TestCase):
             patch("fetch_stations._write_stations"),
             contextlib.redirect_stdout(stdout),
         ):
-            exit_code = fetch_stations.main()
+            exit_code = fetch_stations.main([])
 
         self.assertEqual(exit_code, 0)
         self.assertEqual(
@@ -60,6 +65,80 @@ class FetchStationsTests(unittest.TestCase):
         )
         self.assertEqual(fetch_mock.call_args.args, ("private-token",))
         self.assertNotIn("private-token", stdout.getvalue())
+
+    def test_main_uses_environment_credentials_and_selected_filenames(self) -> None:
+        payload = {"code": "00", "data": []}
+        stations: list[dict[str, object]] = []
+        raw_path = fetch_stations.PRIVATE_OUTPUT_DIR / "raw_snapshot.json"
+        normalized_path = fetch_stations.PRIVATE_OUTPUT_DIR / "stations_snapshot.json"
+        with (
+            patch.dict(
+                "fetch_stations.os.environ",
+                {
+                    "BICIMAD_EMT_EMAIL": " person@example.test ",
+                    "BICIMAD_EMT_PASSWORD": "fake-password",
+                },
+                clear=True,
+            ),
+            patch(
+                "fetch_stations.sys.stdin",
+                new=Mock(isatty=Mock(return_value=False)),
+            ),
+            patch("builtins.input") as input_mock,
+            patch("fetch_stations._login", return_value="private-token") as login_mock,
+            patch("fetch_stations._fetch_stations", return_value=(200, payload)),
+            patch("fetch_stations.normalize_stations_response", return_value=stations),
+            patch("fetch_stations._write_raw_response") as write_raw_mock,
+            patch("fetch_stations._write_stations") as write_stations_mock,
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            exit_code = fetch_stations.main(
+                [
+                    "--raw-filename",
+                    "raw_snapshot.json",
+                    "--normalized-filename",
+                    "stations_snapshot.json",
+                ]
+            )
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(
+            login_mock.call_args.args,
+            ("person@example.test", "fake-password"),
+        )
+        input_mock.assert_not_called()
+        write_raw_mock.assert_called_once_with(payload, raw_path)
+        write_stations_mock.assert_called_once_with(stations, normalized_path)
+
+    def test_main_fails_safely_without_credentials_in_noninteractive_mode(self) -> None:
+        stdout = io.StringIO()
+        with (
+            patch.dict("fetch_stations.os.environ", {}, clear=True),
+            patch(
+                "fetch_stations.sys.stdin",
+                new=Mock(isatty=Mock(return_value=False)),
+            ),
+            patch("fetch_stations._login") as login_mock,
+            contextlib.redirect_stdout(stdout),
+        ):
+            exit_code = fetch_stations.main([])
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("BICIMAD_EMT_EMAIL", stdout.getvalue())
+        self.assertIn("BICIMAD_EMT_PASSWORD", stdout.getvalue())
+        login_mock.assert_not_called()
+
+    def test_filename_options_reject_paths_and_duplicate_filenames(self) -> None:
+        for args in (
+            ["--raw-filename", "../outside.json"],
+            ["--raw-filename", "same.json", "--normalized-filename", "same.json"],
+        ):
+            with (
+                self.subTest(args=args),
+                contextlib.redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit),
+            ):
+                fetch_stations._parse_args(args)
 
     def test_openapi_login_sends_credentials_as_headers_and_extracts_token(
         self,

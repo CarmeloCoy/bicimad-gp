@@ -140,14 +140,26 @@ este endpoint de solo lectura:
 GET https://openapi.emtmadrid.es/v2/transport/bicimad/stations/
 ```
 
-Ejecuta el comando desde la raiz. Pedira solamente el usuario/email y la
-contraseña de EMT OpenAPI; la contraseña se oculta. Obtiene el `accessToken` con
-el login de MobilityLabs y lo usa para consultar las estaciones, sin guardarlo
-ni mostrarlo:
+Ejecuta el comando desde la raiz. En una terminal interactiva pedira solamente
+el usuario/email y la contraseña de EMT OpenAPI; la contraseña se oculta.
+Obtiene el `accessToken` con el login de MobilityLabs y lo usa para consultar
+las estaciones, sin guardarlo ni mostrarlo:
 
 ```powershell
 python .\tools\bicimad_probe\fetch_stations.py
 ```
+
+Los nombres de salida se pueden cambiar; ambos se guardan dentro de
+`tools/bicimad_probe/private/` y deben ser nombres de archivo, no rutas:
+
+```powershell
+python .\tools\bicimad_probe\fetch_stations.py `
+  --raw-filename estaciones_raw.json `
+  --normalized-filename estaciones_normalizadas.json
+```
+
+Por defecto se usan `stations_raw.json` y `stations_normalized.json`. Si vuelves
+a ejecutar el comando con los mismos nombres, los archivos se reemplazan.
 
 Se guardan ambos resultados dentro de `tools/bicimad_probe/private/`:
 
@@ -157,6 +169,38 @@ Se guardan ambos resultados dentro de `tools/bicimad_probe/private/`:
 
 La carpeta `private/` esta excluida de Git; no copies ni publiques la respuesta
 original.
+
+### Ejecucion periodica en Linux con cron
+
+Para ejecuciones no interactivas, configura las variables de entorno
+`BICIMAD_EMT_EMAIL` y `BICIMAD_EMT_PASSWORD`. No incluyas las credenciales
+directamente en la entrada de cron. Una opcion es guardar las dos variables en
+`tools/bicimad_probe/private/emt_credentials.env`, con sintaxis de shell:
+
+```sh
+BICIMAD_EMT_EMAIL='tu-correo'
+BICIMAD_EMT_PASSWORD='tu-contrasena'
+```
+
+Restringe el acceso al archivo:
+
+```sh
+chmod 600 tools/bicimad_probe/private/emt_credentials.env
+```
+
+Anade esta entrada con `crontab -e`, sustituyendo la ruta del repositorio y
+ajustando las rutas de `python3` y `flock` si fuera necesario. Se ejecuta cada
+cinco minutos, evita ejecuciones simultaneas y anade la salida a un log privado:
+
+```cron
+BICIMAD_REPO=/ruta/absoluta/al/repositorio
+*/5 * * * * cd "$BICIMAD_REPO" && set -a && . "$BICIMAD_REPO/tools/bicimad_probe/private/emt_credentials.env" && set +a && /usr/bin/flock -n "$BICIMAD_REPO/tools/bicimad_probe/private/fetch_stations.lock" /usr/bin/python3 "$BICIMAD_REPO/tools/bicimad_probe/fetch_stations.py" --raw-filename stations_raw.json --normalized-filename stations_normalized.json >> "$BICIMAD_REPO/tools/bicimad_probe/private/fetch_stations.log" 2>&1
+```
+
+Los nombres por defecto se pueden omitir de la linea de cron. Con nombres fijos,
+cada ejecucion correcta reemplaza los archivos de salida anteriores. Si no hay
+variables de credenciales y no existe una terminal interactiva, el programa
+falla de forma segura en vez de quedarse esperando una entrada.
 
 ## Normalizacion
 

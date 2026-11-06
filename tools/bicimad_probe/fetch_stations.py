@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import argparse
 import getpass
 import json
+import os
+import sys
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -17,26 +20,38 @@ from safe_output import safe_api_code
 LOGIN_ENDPOINT = "https://openapi.emtmadrid.es/v1/mobilitylabs/user/login/"
 ENDPOINT = "https://openapi.emtmadrid.es/v2/transport/bicimad/stations/"
 TIMEOUT_SECONDS = 20
-RAW_OUTPUT_PATH = Path("tools/bicimad_probe/private/stations_raw.json")
-OUTPUT_PATH = Path("tools/bicimad_probe/private/stations_normalized.json")
+PRIVATE_OUTPUT_DIR = Path(__file__).resolve().parent / "private"
+RAW_OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_raw.json"
+OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_normalized.json"
+EMAIL_ENV_VAR = "BICIMAD_EMT_EMAIL"
+PASSWORD_ENV_VAR = "BICIMAD_EMT_PASSWORD"
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    raw_output_path = PRIVATE_OUTPUT_DIR / args.raw_filename
+    output_path = PRIVATE_OUTPUT_DIR / args.normalized_filename
+
     stage = "login"
     try:
-        email = input("Usuario/email EMT OpenAPI: ").strip()
-        password = getpass.getpass("Contraseña: ")
-        if not email or not password:
-            raise ValueError("Missing required local input")
-
+        email, password = _get_credentials()
         access_token = _login(email, password)
         stage = "estaciones"
         status, payload = _fetch_stations(access_token)
         stations = normalize_stations_response(payload)
-        _write_raw_response(payload)
-        _write_stations(stations)
-        _print_success_summary(status, payload, stations)
+        _write_raw_response(payload, raw_output_path)
+        _write_stations(stations, output_path)
+        _print_success_summary(
+            status,
+            payload,
+            stations,
+            raw_output_path=raw_output_path,
+            output_path=output_path,
+        )
         return 0
+    except MissingCredentialsError as error:
+        print(f"Credenciales EMT no disponibles: {error}")
+        return 1
     except urllib.error.HTTPError as error:
         _print_error_summary(
             stage=stage,
@@ -68,7 +83,7 @@ def main() -> int:
             payload=None,
         )
         return 1
-    except (OSError, ValueError, json.JSONDecodeError) as error:
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as error:
         _print_error_summary(
             stage=stage,
             status=None,
@@ -76,6 +91,68 @@ def main() -> int:
             payload=None,
         )
         return 1
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fetch and normalize BiciMAD stations into the private directory."
+    )
+    parser.add_argument(
+        "--raw-filename",
+        type=_filename_argument,
+        default=RAW_OUTPUT_PATH.name,
+        help=f"raw response filename in {PRIVATE_OUTPUT_DIR} (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--normalized-filename",
+        type=_filename_argument,
+        default=OUTPUT_PATH.name,
+        help=f"normalized stations filename in {PRIVATE_OUTPUT_DIR} (default: %(default)s)",
+    )
+    args = parser.parse_args(argv)
+    if args.raw_filename == args.normalized_filename:
+        parser.error("raw and normalized output filenames must be different")
+    return args
+
+
+def _filename_argument(value: str) -> str:
+    if (
+        not value
+        or value in {".", ".."}
+        or Path(value).name != value
+        or "/" in value
+        or "\\" in value
+        or "\0" in value
+    ):
+        raise argparse.ArgumentTypeError("provide a filename, not a path")
+    return value
+
+
+def _get_credentials() -> tuple[str, str]:
+    email = os.environ.get(EMAIL_ENV_VAR)
+    password = os.environ.get(PASSWORD_ENV_VAR)
+    if email is not None or password is not None:
+        if not email or not password:
+            raise MissingCredentialsError(
+                f"set both {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR}"
+            )
+        email = email.strip()
+        if not email:
+            raise MissingCredentialsError(
+                f"set both {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR}"
+            )
+        return email, password
+
+    if not sys.stdin.isatty():
+        raise MissingCredentialsError(
+            f"set {EMAIL_ENV_VAR} and {PASSWORD_ENV_VAR} for noninteractive runs"
+        )
+
+    email = input("Usuario/email EMT OpenAPI: ").strip()
+    password = getpass.getpass("Contraseña: ")
+    if not email or not password:
+        raise MissingCredentialsError("email y contraseña son obligatorios")
+    return email, password
 
 
 def _login(
@@ -133,17 +210,23 @@ def _fetch_json(
     return status, payload
 
 
-def _write_stations(stations: list[dict[str, Any]]) -> None:
-    OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_PATH.write_text(
+def _write_stations(
+    stations: list[dict[str, Any]], output_path: Path | None = None
+) -> None:
+    output_path = output_path or OUTPUT_PATH
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(stations, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def _write_raw_response(payload: dict[str, Any]) -> None:
-    RAW_OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    RAW_OUTPUT_PATH.write_text(
+def _write_raw_response(
+    payload: dict[str, Any], output_path: Path | None = None
+) -> None:
+    output_path = output_path or RAW_OUTPUT_PATH
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
@@ -153,15 +236,20 @@ def _print_success_summary(
     status: int,
     payload: dict[str, Any],
     stations: list[dict[str, Any]],
+    *,
+    raw_output_path: Path | None = None,
+    output_path: Path | None = None,
 ) -> None:
+    raw_output_path = raw_output_path or RAW_OUTPUT_PATH
+    output_path = output_path or OUTPUT_PATH
     received = payload.get("data")
     received_count = len(received) if isinstance(received, list) else 0
     print(f"HTTP {status}")
     print(f"Codigo de API: {safe_api_code(payload.get('code')) or '-'}")
     print(f"Estaciones recibidas: {received_count}")
     print(f"Estaciones normalizadas: {len(stations)}")
-    print(f"Respuesta original: {RAW_OUTPUT_PATH.as_posix()}")
-    print(f"Resultado normalizado: {OUTPUT_PATH.as_posix()}")
+    print(f"Respuesta original: {raw_output_path.as_posix()}")
+    print(f"Resultado normalizado: {output_path.as_posix()}")
 
 
 def _safe_error_payload(error: urllib.error.HTTPError) -> dict[str, Any] | None:
@@ -192,6 +280,10 @@ class OpenApiLoginError(ValueError):
         self.status = status
         self.api_code = safe_api_code(api_code)
         self.error_type = error_type
+
+
+class MissingCredentialsError(ValueError):
+    pass
 
 
 if __name__ == "__main__":
