@@ -14,13 +14,22 @@ python -m pip install -r .\tools\bicimad_probe\requirements.txt
 
 ## Configuracion Tecnica Inicial
 
-Antes del primer uso con login, guarda una sola vez `passKey` y `X-ClientId` en el almacen seguro de credenciales de Windows:
+Antes del primer uso con login, puedes guardar una sola vez `passKey` y `X-ClientId` en el almacen seguro de credenciales disponible en tu sistema:
 
 ```powershell
 python .\tools\bicimad_probe\configure_local_probe.py
 ```
 
-El programa pedira ambos valores con `getpass`, no los mostrara y no los guardara en archivos del repositorio.
+El programa pedira ambos valores con `getpass`, no los mostrara y no los guardara en archivos del repositorio. En Linux de escritorio, esto requiere un keyring compatible y desbloqueado.
+
+En un servidor Linux sin keyring, el flujo de login tambien acepta estas variables de entorno:
+
+```text
+BICIMAD_PASS_KEY
+BICIMAD_X_CLIENT_ID
+```
+
+Configura ambas mediante el gestor de secretos de tu entorno y ejecuta `fetch_trips_with_login.py`. Si ambas tienen valor, se usan en lugar del keyring; si ninguna tiene valor, se consulta el keyring local. Si solo una tiene valor, el programa falla sin intentar mezclar fuentes. No guardes los valores en Git ni los incluyas en comandos que queden en el historial de la shell; las variables de entorno pueden ser visibles para procesos con permisos suficientes.
 
 `passKey` y `X-ClientId` deben obtenerse de una captura propia y legitima. No deben compartirse, publicarse, registrarse ni incluirse en Git.
 
@@ -65,7 +74,7 @@ Si funciona, solo se escribe:
 tools/bicimad_probe/private/trips_normalized.json
 ```
 
-La respuesta cruda, el access token, el id de usuario, el NIF, el email, el device ID, `passKey`, `X-ClientId` y la contrasena no se imprimen. Solo `passKey` y `X-ClientId` se guardan en keyring, y solo el device ID generado se guarda en `private/`.
+La respuesta cruda, el access token, el id de usuario, el NIF, el email, el device ID, `passKey`, `X-ClientId` y la contrasena no se imprimen. `passKey` y `X-ClientId` se leen del keyring local o de variables de entorno, y solo el device ID generado se guarda en `private/`.
 
 ## Diagnostico Temporal de Bicicleta y Precio
 

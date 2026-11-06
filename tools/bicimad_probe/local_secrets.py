@@ -3,12 +3,15 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
 SERVICE_NAME = "bicimad_social_probe"
 PASS_KEY_ENTRY = "passKey"
 X_CLIENT_ID_ENTRY = "xClientId"
+PASS_KEY_ENV = "BICIMAD_PASS_KEY"
+X_CLIENT_ID_ENV = "BICIMAD_X_CLIENT_ID"
 
 
 @dataclass(frozen=True, repr=False)
@@ -36,6 +39,13 @@ def load_technical_config(
     *,
     keyring_backend: Any | None = None,
 ) -> TechnicalConfig:
+    pass_key = os.environ.get(PASS_KEY_ENV, "").strip()
+    x_client_id = os.environ.get(X_CLIENT_ID_ENV, "").strip()
+    if pass_key and x_client_id:
+        return TechnicalConfig(pass_key=pass_key, x_client_id=x_client_id)
+    if pass_key or x_client_id:
+        raise MissingLocalTechnicalConfigError()
+
     backend = keyring_backend or _load_keyring()
     pass_key = backend.get_password(SERVICE_NAME, PASS_KEY_ENTRY)
     x_client_id = backend.get_password(SERVICE_NAME, X_CLIENT_ID_ENTRY)

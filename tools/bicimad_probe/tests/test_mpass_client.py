@@ -667,16 +667,52 @@ class MPassClientTests(unittest.TestCase):
         backend.values[(SERVICE_NAME, PASS_KEY_ENTRY)] = "fake-pass-key"
         backend.values[(SERVICE_NAME, X_CLIENT_ID_ENTRY)] = "fake-client-id"
 
-        config = load_technical_config(keyring_backend=backend)
+        with mock.patch.dict("os.environ", {}, clear=True):
+            config = load_technical_config(keyring_backend=backend)
 
         self.assertEqual(config.pass_key, "fake-pass-key")
         self.assertEqual(config.x_client_id, "fake-client-id")
+
+    def test_local_secrets_prefers_pair_of_environment_variables(self) -> None:
+        backend = mock.Mock()
+
+        with mock.patch.dict(
+            "os.environ",
+            {
+                "BICIMAD_PASS_KEY": " env-pass-key ",
+                "BICIMAD_X_CLIENT_ID": " env-client-id ",
+            },
+            clear=True,
+        ):
+            config = load_technical_config(keyring_backend=backend)
+
+        self.assertEqual(config.pass_key, "env-pass-key")
+        self.assertEqual(config.x_client_id, "env-client-id")
+        backend.get_password.assert_not_called()
+
+    def test_local_secrets_rejects_partial_environment_configuration(self) -> None:
+        backend = mock.Mock()
+
+        with (
+            mock.patch.dict(
+                "os.environ",
+                {"BICIMAD_PASS_KEY": "env-pass-key"},
+                clear=True,
+            ),
+            self.assertRaises(MissingLocalTechnicalConfigError),
+        ):
+            load_technical_config(keyring_backend=backend)
+
+        backend.get_password.assert_not_called()
 
     def test_local_secrets_detects_incomplete_configuration(self) -> None:
         backend = FakeKeyring()
         backend.values[(SERVICE_NAME, PASS_KEY_ENTRY)] = "fake-pass-key"
 
-        with self.assertRaises(MissingLocalTechnicalConfigError):
+        with (
+            mock.patch.dict("os.environ", {}, clear=True),
+            self.assertRaises(MissingLocalTechnicalConfigError),
+        ):
             load_technical_config(keyring_backend=backend)
 
     def test_local_secrets_deletes_both_entries(self) -> None:
