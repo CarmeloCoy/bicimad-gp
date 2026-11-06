@@ -29,7 +29,7 @@ from mpass_client import (
     build_login_device_model,
     fetch_trips,
     fetch_userdata_dn,
-    login,
+    login_or_reuse,
 )
 
 DEFAULT_MAX_PAGES = 100
@@ -307,7 +307,7 @@ def main(argv: list[str] | None = None) -> int:
         if not email or not password:
             raise ValueError("Missing required local input")
 
-        login_result = login(
+        login_result = login_or_reuse(
             email=email,
             password=password,
             pass_key=technical_config.pass_key,

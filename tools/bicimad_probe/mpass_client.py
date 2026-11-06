@@ -2,12 +2,17 @@
 """Minimal read-only MPass/BiciMAD client for local experiments.
 
 The module intentionally exposes small functions that are easy to test with a
-mocked opener. It does not persist credentials, tokens or raw responses.
+mocked opener. Login tokens can be cached locally until their declared expiry;
+credentials and raw responses are not persisted here.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -23,6 +28,11 @@ USERDATA_ENDPOINT = "https://apiemtpay.emtmadrid.es/v2/bicimad/userdata/"
 TRIPS_ENDPOINT = "https://apiemtpay.emtmadrid.es/v2/bicimad/trips/"
 STATIONS_ENDPOINT = "https://openapi.emtmadrid.es/v2/transport/bicimad/stations/"
 TIMEOUT_SECONDS = 20
+TOKEN_CACHE_PATH = (
+    Path(__file__).resolve().parent / "private" / "mpass_token_cache.json"
+)
+TOKEN_CACHE_VERSION = 1
+TOKEN_EXPIRY_SAFETY_SECONDS = 60
 OUTPUT_PATH = Path("tools/bicimad_probe/private/trips_normalized.json")
 
 STATIC_BICIMAD_HEADERS = {
@@ -162,8 +172,159 @@ def login(
     return LoginResult(
         access_token=access_token,
         user_id=user_id,
-        token_sec_expiration=expiration if isinstance(expiration, int) else None,
+        token_sec_expiration=(
+            expiration
+            if isinstance(expiration, int) and not isinstance(expiration, bool)
+            else None
+        ),
     )
+
+
+def login_or_reuse(
+    *,
+    email: str,
+    password: str,
+    pass_key: str,
+    x_client_id: str,
+    device_id: str,
+    login_device_model: str,
+    cache_path: Path | None = None,
+    opener: Opener = urllib.request.urlopen,
+) -> LoginResult:
+    """Reuse a matching unexpired local MPass token, otherwise log in."""
+    cache_path = TOKEN_CACHE_PATH if cache_path is None else cache_path
+    cache_key = _token_cache_key(
+        email=email,
+        pass_key=pass_key,
+        x_client_id=x_client_id,
+        device_id=device_id,
+        login_device_model=login_device_model,
+    )
+    cached_result = _read_cached_login(cache_path, cache_key)
+    if cached_result is not None:
+        return cached_result
+
+    result = login(
+        email=email,
+        password=password,
+        pass_key=pass_key,
+        x_client_id=x_client_id,
+        device_id=device_id,
+        login_device_model=login_device_model,
+        opener=opener,
+    )
+    if (
+        isinstance(result.token_sec_expiration, int)
+        and not isinstance(result.token_sec_expiration, bool)
+        and result.token_sec_expiration > 0
+    ):
+        try:
+            _write_cached_login(
+                cache_path,
+                cache_key,
+                result,
+                expires_at=int(time.time()) + result.token_sec_expiration,
+            )
+        except OSError:
+            # A successful login remains usable if the local cache is unavailable.
+            pass
+    return result
+
+
+def _token_cache_key(
+    *,
+    email: str,
+    pass_key: str,
+    x_client_id: str,
+    device_id: str,
+    login_device_model: str,
+) -> str:
+    identity = "\0".join(
+        (
+            email.strip().casefold(),
+            pass_key,
+            x_client_id,
+            device_id,
+            login_device_model,
+        )
+    )
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+
+def _read_cached_login(cache_path: Path, cache_key: str) -> LoginResult | None:
+    try:
+        os.chmod(cache_path, 0o600)
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    if payload.get("version") != TOKEN_CACHE_VERSION or payload.get("key") != cache_key:
+        return None
+
+    access_token = payload.get("access_token")
+    user_id = payload.get("user_id")
+    expires_at = payload.get("expires_at")
+    if (
+        not isinstance(access_token, str)
+        or not access_token
+        or not isinstance(user_id, str)
+        or not user_id
+        or isinstance(expires_at, bool)
+        or not isinstance(expires_at, int)
+    ):
+        return None
+
+    remaining = expires_at - int(time.time())
+    if remaining <= TOKEN_EXPIRY_SAFETY_SECONDS:
+        return None
+    return LoginResult(
+        access_token=access_token,
+        user_id=user_id,
+        token_sec_expiration=remaining,
+    )
+
+
+def _write_cached_login(
+    cache_path: Path,
+    cache_key: str,
+    result: LoginResult,
+    *,
+    expires_at: int,
+) -> None:
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_fd, temporary_name = tempfile.mkstemp(
+        prefix=".mpass-token-",
+        suffix=".tmp",
+        dir=cache_path.parent,
+    )
+    try:
+        os.chmod(temporary_name, 0o600)
+        with os.fdopen(temporary_fd, "w", encoding="utf-8") as cache_file:
+            temporary_fd = -1
+            json.dump(
+                {
+                    "version": TOKEN_CACHE_VERSION,
+                    "key": cache_key,
+                    "access_token": result.access_token,
+                    "user_id": result.user_id,
+                    "expires_at": expires_at,
+                },
+                cache_file,
+                separators=(",", ":"),
+            )
+            cache_file.write("\n")
+            cache_file.flush()
+            os.fsync(cache_file.fileno())
+        os.replace(temporary_name, cache_path)
+        os.chmod(cache_path, 0o600)
+    finally:
+        if temporary_fd >= 0:
+            os.close(temporary_fd)
+        try:
+            os.unlink(temporary_name)
+        except FileNotFoundError:
+            pass
 
 
 def fetch_userdata_dn(
@@ -312,9 +473,10 @@ def run_login_trip_flow(
     device_model_visible: str,
     android_version: str,
     output_path: Path = OUTPUT_PATH,
+    token_cache_path: Path | None = None,
     opener: Opener = urllib.request.urlopen,
 ) -> FlowResult:
-    login_result = login(
+    login_result = login_or_reuse(
         email=email,
         password=password,
         pass_key=pass_key,
@@ -324,6 +486,7 @@ def run_login_trip_flow(
             device_model_visible,
             android_version,
         ),
+        cache_path=token_cache_path,
         opener=opener,
     )
     nif = fetch_userdata_dn(

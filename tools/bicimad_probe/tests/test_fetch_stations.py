@@ -34,7 +34,7 @@ class FetchStationsTests(unittest.TestCase):
         with (
             patch("fetch_stations._prompt_values", return_value=values) as prompt_mock,
             patch(
-                "fetch_stations.login",
+                "fetch_stations.login_or_reuse",
                 return_value=LoginResult("private-token", "private-user", 3600),
             ) as login_mock,
             patch(

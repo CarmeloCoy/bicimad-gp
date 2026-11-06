@@ -87,7 +87,7 @@ Si funciona, solo se escribe:
 tools/bicimad_probe/private/trips_normalized.json
 ```
 
-La respuesta cruda, el access token, el id de usuario, el NIF, el email, el device ID, `passKey`, `X-ClientId` y la contrasena no se imprimen. `passKey` y `X-ClientId` se leen del keyring local o de variables de entorno, y solo el device ID generado se guarda en `private/`.
+La respuesta cruda, el access token, el id de usuario, el NIF, el email, el device ID, `passKey`, `X-ClientId` y la contrasena no se imprimen. El access token, el id de usuario y su caducidad se guardan en `tools/bicimad_probe/private/mpass_token_cache.json` con permisos restrictivos (0600 en sistemas compatibles) y se reutilizan mientras sigan vigentes, con un margen de seguridad de un minuto. La entrada se vincula mediante un hash al email, la configuracion tecnica y el dispositivo; nunca se guarda la contrasena. Si la cache no se puede leer o escribir, el flujo continua con un login normal. Para forzar un login nuevo, elimina el archivo de cache. `passKey` y `X-ClientId` se leen del keyring local o de variables de entorno, y el device ID generado se guarda en `private/`.
 
 ## Diagnostico Temporal de Bicicleta y Precio
 

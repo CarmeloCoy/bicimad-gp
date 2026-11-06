@@ -4,7 +4,9 @@ import contextlib
 import copy
 import io
 import json
+import os
 import re
+import stat
 import sys
 import tempfile
 import unittest
@@ -29,15 +31,18 @@ from local_secrets import (
     save_technical_config,
 )
 from mpass_client import (
+    STATIONS_ENDPOINT,
     FlowResult,
     ProbeRequestError,
-    STATIONS_ENDPOINT,
     build_login_device_model,
-    fetch_stations as fetch_station_data,
     fetch_trips,
     fetch_userdata_dn,
     login,
+    login_or_reuse,
     run_login_trip_flow,
+)
+from mpass_client import (
+    fetch_stations as fetch_station_data,
 )
 
 
@@ -72,6 +77,83 @@ class MPassClientTests(unittest.TestCase):
         )
         self.assertNotIn("latitude", request.headers)
         self.assertNotIn("longitude", request.headers)
+
+    def test_login_or_reuse_persists_and_reuses_unexpired_token(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "mpass_token_cache.json"
+            opener = FakeOpener([FakeResponse(_login_payload())])
+            first = login_or_reuse(
+                email="person@example.test",
+                password="fake-password",
+                pass_key="fake-pass-key",
+                x_client_id="fake-client-id",
+                device_id="fake-device-id",
+                login_device_model=build_login_device_model("Model X", "13"),
+                cache_path=cache_path,
+                opener=opener,
+            )
+
+            cache = json.loads(cache_path.read_text(encoding="utf-8"))
+            self.assertEqual(first.access_token, "fake-access-token")
+            self.assertEqual(len(opener.requests), 1)
+            if os.name == "posix":
+                self.assertEqual(stat.S_IMODE(cache_path.stat().st_mode), 0o600)
+            self.assertNotIn("person@example.test", cache_path.read_text())
+            self.assertNotIn("fake-password", cache_path.read_text())
+            self.assertEqual(cache["access_token"], "fake-access-token")
+
+            no_network = FakeOpener([])
+            reused = login_or_reuse(
+                email="person@example.test",
+                password="fake-password",
+                pass_key="fake-pass-key",
+                x_client_id="fake-client-id",
+                device_id="fake-device-id",
+                login_device_model=build_login_device_model("Model X", "13"),
+                cache_path=cache_path,
+                opener=no_network,
+            )
+
+        self.assertEqual(reused.access_token, first.access_token)
+        self.assertEqual(reused.user_id, first.user_id)
+        self.assertEqual(no_network.requests, [])
+
+    def test_login_or_reuse_logs_in_again_when_token_has_expired(self) -> None:
+        now = 1_800_000_000
+        with tempfile.TemporaryDirectory() as directory:
+            cache_path = Path(directory) / "mpass_token_cache.json"
+            with mock.patch("mpass_client.time.time", return_value=now):
+                login_or_reuse(
+                    email="person@example.test",
+                    password="fake-password",
+                    pass_key="fake-pass-key",
+                    x_client_id="fake-client-id",
+                    device_id="fake-device-id",
+                    login_device_model=build_login_device_model("Model X", "13"),
+                    cache_path=cache_path,
+                    opener=FakeOpener([FakeResponse(_login_payload())]),
+                )
+
+            renewed_payload = _login_payload()
+            renewed_payload["data"][0]["accessToken"] = "renewed-access-token"
+            renewal_opener = FakeOpener([FakeResponse(renewed_payload)])
+            with mock.patch(
+                "mpass_client.time.time",
+                return_value=now + 2_592_000,
+            ):
+                renewed = login_or_reuse(
+                    email="person@example.test",
+                    password="fake-password",
+                    pass_key="fake-pass-key",
+                    x_client_id="fake-client-id",
+                    device_id="fake-device-id",
+                    login_device_model=build_login_device_model("Model X", "13"),
+                    cache_path=cache_path,
+                    opener=renewal_opener,
+                )
+
+        self.assertEqual(renewed.access_token, "renewed-access-token")
+        self.assertEqual(len(renewal_opener.requests), 1)
 
     def test_login_with_non_success_code_fails_safely(self) -> None:
         opener = FakeOpener(
@@ -383,7 +465,7 @@ class MPassClientTests(unittest.TestCase):
                 self.assertEqual(raised.exception.error_type, "HTTPError")
                 self.assertNotIn("fake-access-token", str(raised.exception))
 
-    def test_full_flow_writes_only_normalized_json(self) -> None:
+    def test_full_flow_writes_normalized_json_and_private_token_cache(self) -> None:
         trips_payload = _trips_payload()
         original_trips_payload = copy.deepcopy(trips_payload)
         opener = FakeOpener(
@@ -396,6 +478,7 @@ class MPassClientTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "private" / "trips_normalized.json"
+            token_cache_path = Path(directory) / "private" / "mpass_token_cache.json"
             result = run_login_trip_flow(
                 email="person@example.test",
                 password="fake-password",
@@ -405,13 +488,14 @@ class MPassClientTests(unittest.TestCase):
                 device_model_visible="Model X",
                 android_version="13",
                 output_path=output_path,
+                token_cache_path=token_cache_path,
                 opener=opener,
             )
 
             self.assertEqual(result.received_count, 2)
             self.assertEqual(result.normalized_count, 2)
             files = [path for path in Path(directory).rglob("*") if path.is_file()]
-            self.assertEqual(files, [output_path])
+            self.assertCountEqual(files, [output_path, token_cache_path])
             normalized = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(
                 set(normalized[0].keys()),
@@ -612,6 +696,7 @@ class MPassClientTests(unittest.TestCase):
                 device_model_visible="Model X",
                 android_version="13",
                 output_path=output_path,
+                token_cache_path=Path(directory) / "mpass_token_cache.json",
                 opener=opener,
             )
 
@@ -1031,6 +1116,7 @@ def _run_flow_and_read_normalized(trips_payload: dict) -> list[dict]:
             device_model_visible="Model X",
             android_version="13",
             output_path=output_path,
+            token_cache_path=Path(directory) / "mpass_token_cache.json",
             opener=opener,
         )
         return json.loads(output_path.read_text(encoding="utf-8"))

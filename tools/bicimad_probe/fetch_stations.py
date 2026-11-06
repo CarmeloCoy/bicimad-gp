@@ -11,17 +11,19 @@ from typing import Any
 
 from fetch_trips_with_login import (
     EMAIL_ENV_VAR,
+    PASSWORD_ENV_VAR,
     InvalidLocalDeviceIdError,
     MissingAccountCredentialsError,
-    PASSWORD_ENV_VAR,
     _prompt_values,
 )
 from local_secrets import MissingLocalTechnicalConfigError
 from mpass_client import (
     ProbeRequestError,
     build_login_device_model,
+    login_or_reuse,
+)
+from mpass_client import (
     fetch_stations as _fetch_stations,
-    login,
 )
 from normalize_stations import normalize_stations_response
 from safe_output import safe_api_code
@@ -40,7 +42,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         values = _prompt_values()
         stage = "login"
-        login_result = login(
+        login_result = login_or_reuse(
             email=values["email"],
             password=values["password"],
             pass_key=values["pass_key"],
