@@ -1,13 +1,15 @@
 import argparse
+import json
 import re
 from datetime import datetime
 from pathlib import Path
 
 import polars as pl
 from deltalake import DeltaTable
+from normalize_stations import normalize_stations_response
 
 PATTERN = re.compile(
-    r"^stations_normalized_(\d{8}_\d{6})\.json$"
+    r"^stations_raw_(\d{8}_\d{6})\.json$"
 )
 
 STATIONS_SCHEMA = {
@@ -66,11 +68,12 @@ def import_snapshot(json_file, delta_path):
 
     collected_at = get_collection_time(json_file.name)
 
-    # Read JSON with explicit schema
-    df = pl.read_json(
-        json_file,
-        schema=STATIONS_SCHEMA
-    )
+    # Normalize the raw API response before constructing the Delta frame.
+    payload = json.loads(json_file.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise TypeError("Invalid stations response: expected a JSON object")
+    stations = normalize_stations_response(payload)
+    df = pl.DataFrame(stations, schema=STATIONS_SCHEMA, orient="row")
 
     if df.is_empty():
         print(f"Empty snapshot: {json_file.name}")
@@ -109,7 +112,7 @@ def import_snapshot(json_file, delta_path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Import BiciMAD JSON snapshots into Delta Lake"
+        description="Normalize and import raw BiciMAD station snapshots into Delta Lake"
     )
 
     parser.add_argument(
@@ -138,7 +141,7 @@ def main():
     elif input_path.is_dir():
         files = sorted(
             file for file in input_path.glob(
-                "stations_normalized_*.json"
+                "stations_raw_*.json"
             )
             if PATTERN.fullmatch(file.name)
         )

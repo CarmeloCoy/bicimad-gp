@@ -172,23 +172,33 @@ guardarlo ni mostrarlo:
 python .\tools\bicimad_probe\fetch_stations.py
 ```
 
-Los nombres de salida se pueden cambiar; ambos se guardan dentro de
-`tools/bicimad_probe/private/` y deben ser nombres de archivo, no rutas:
+El nombre de salida se puede cambiar; se guarda dentro de
+`tools/bicimad_probe/private/` y debe ser un nombre de archivo, no una ruta:
 
 ```powershell
 python .\tools\bicimad_probe\fetch_stations.py `
-  --raw-filename estaciones_raw.json `
-  --normalized-filename estaciones_normalizadas.json
+  --raw-filename stations_raw_20261107_120000.json
 ```
 
-Por defecto se usan `stations_raw.json` y `stations_normalized.json`. Si vuelves
-a ejecutar el comando con los mismos nombres, los archivos se reemplazan.
+Por defecto se crea un archivo `stations_raw_YYYYMMDD_HHMMSS.json` nuevo en cada
+ejecucion. Si se indica un nombre personalizado para importarlo a Delta, debe
+mantener ese formato.
 
-Se guardan ambos resultados dentro de `tools/bicimad_probe/private/`:
+Se guarda la respuesta original completa del endpoint en
+`tools/bicimad_probe/private/`. La normalizacion se realiza durante la
+importacion a Delta; no se crea un JSON normalizado intermedio.
 
-- `stations_raw.json`: respuesta original completa del endpoint.
-- `stations_normalized.json`: identificador, numero, nombre, direccion,
-  coordenadas y campos de disponibilidad/capacidad; omite datos auxiliares.
+Importa un snapshot o todos los snapshots del directorio con:
+
+```powershell
+python .\tools\bicimad_probe\stations_raw_json_to_delta.py `
+  .\tools\bicimad_probe\private `
+  .\tools\bicimad_probe\private\stations_delta
+```
+
+El importador normaliza los campos de identificacion, ubicacion y
+disponibilidad/capacidad, omite datos auxiliares y agrega los metadatos de
+captura a la tabla Delta.
 
 La carpeta `private/` esta excluida de Git; no copies ni publiques la respuesta
 original. Igual que el flujo de viajes, acepta `BICIMAD_EMT_EMAIL` y

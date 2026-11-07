@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,18 +26,17 @@ from mpass_client import (
 from mpass_client import (
     fetch_stations as _fetch_stations,
 )
-from normalize_stations import normalize_stations_response
 from safe_output import safe_api_code
 
 PRIVATE_OUTPUT_DIR = Path(__file__).resolve().parent / "private"
-RAW_OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_raw.json"
-OUTPUT_PATH = PRIVATE_OUTPUT_DIR / "stations_normalized.json"
+RAW_OUTPUT_PATH = PRIVATE_OUTPUT_DIR / (
+    f"stations_raw_{datetime.now():%Y%m%d_%H%M%S}.json"
+)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     raw_output_path = PRIVATE_OUTPUT_DIR / args.raw_filename
-    output_path = PRIVATE_OUTPUT_DIR / args.normalized_filename
 
     stage = "entrada"
     try:
@@ -63,9 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         status = response.status
         payload = response.payload
-        stations = normalize_stations_response(payload)
         _write_raw_response(payload, raw_output_path)
-        _write_stations(stations, output_path)
         expiration = (
             login_result.token_sec_expiration
             if login_result.token_sec_expiration is not None
@@ -76,9 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         _print_success_summary(
             status,
             payload,
-            stations,
             raw_output_path=raw_output_path,
-            output_path=output_path,
         )
         return 0
     except InvalidLocalDeviceIdError:
@@ -106,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Fetch and normalize BiciMAD stations into the private directory."
+        description="Fetch raw BiciMAD station data into the private directory."
     )
     parser.add_argument(
         "--raw-filename",
@@ -114,16 +110,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=RAW_OUTPUT_PATH.name,
         help=f"raw response filename in {PRIVATE_OUTPUT_DIR} (default: %(default)s)",
     )
-    parser.add_argument(
-        "--normalized-filename",
-        type=_filename_argument,
-        default=OUTPUT_PATH.name,
-        help=f"normalized stations filename in {PRIVATE_OUTPUT_DIR} (default: %(default)s)",
-    )
-    args = parser.parse_args(argv)
-    if args.raw_filename == args.normalized_filename:
-        parser.error("raw and normalized output filenames must be different")
-    return args
+    return parser.parse_args(argv)
 
 
 def _filename_argument(value: str) -> str:
@@ -137,17 +124,6 @@ def _filename_argument(value: str) -> str:
     ):
         raise argparse.ArgumentTypeError("provide a filename, not a path")
     return value
-
-
-def _write_stations(
-    stations: list[dict[str, Any]], output_path: Path | None = None
-) -> None:
-    output_path = output_path or OUTPUT_PATH
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(
-        json.dumps(stations, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
 
 
 def _write_raw_response(
@@ -164,21 +140,16 @@ def _write_raw_response(
 def _print_success_summary(
     status: int,
     payload: dict[str, Any],
-    stations: list[dict[str, Any]],
     *,
     raw_output_path: Path | None = None,
-    output_path: Path | None = None,
 ) -> None:
     raw_output_path = raw_output_path or RAW_OUTPUT_PATH
-    output_path = output_path or OUTPUT_PATH
     received = payload.get("data")
     received_count = len(received) if isinstance(received, list) else 0
     print(f"HTTP {status}")
     print(f"Codigo de API: {safe_api_code(payload.get('code')) or '-'}")
     print(f"Estaciones recibidas: {received_count}")
-    print(f"Estaciones normalizadas: {len(stations)}")
     print(f"Respuesta original: {raw_output_path.as_posix()}")
-    print(f"Resultado normalizado: {output_path.as_posix()}")
 
 
 def _print_error_summary(
